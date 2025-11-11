@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+numpy
+weaviate-client
+sentence-transformers
+transformers
+Pillow
+tqdm
+redis
+faiss-gpu-cu12
+python-dotenv
+pydantic
+jinja2
