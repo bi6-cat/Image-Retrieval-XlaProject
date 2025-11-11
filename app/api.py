@@ -7,7 +7,7 @@ import numpy as np, json
 from PIL import Image
 import io
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from app.config import settings
 from app.utils import logger, l2norm_np
 from app.encoder import Encoder
@@ -137,9 +137,9 @@ def search(req: SearchRequest):
 # Feedback endpoint using Weaviate
 class FeedbackRequest(BaseModel):
     session_id: str
-    feedback_text: str = None
-    liked_image_ids: list = []  # should be uuids returned by search
-    disliked_image_ids: list = []  # images to move away from
+    feedback_text: Optional[str] = None
+    liked_image_ids: List[str] = []
+    disliked_image_ids: List[str] = []
     w_text: float = 0.5
     w_like: float = 0.5
     alpha: float = 0.4
@@ -206,10 +206,17 @@ def feedback(req: FeedbackRequest):
     if client is None:
         raise HTTPException(status_code=500, detail="Weaviate client not configured")
 
+    # Log request for debugging
+    logger.info(f"Feedback request - session: {req.session_id}, liked: {len(req.liked_image_ids)}, disliked: {len(req.disliked_image_ids)}, text: {bool(req.feedback_text)}")
+
+    # Validate at least some feedback
+    if not req.liked_image_ids and not req.disliked_image_ids and not req.feedback_text:
+        raise HTTPException(status_code=400, detail="Please provide at least one feedback: liked images, disliked images, or text")
+
     # get prev vector
     prev = redis_get_json(r, f"{req.session_id}:previous_search_vector")
     if prev is None:
-        raise HTTPException(status_code=400, detail="No previous_search_vector in session. Call /search first.")
+        raise HTTPException(status_code=400, detail="No previous search found. Please search first.")
     prev_v = np.asarray(prev, dtype=np.float32)
 
     # encode text feedback

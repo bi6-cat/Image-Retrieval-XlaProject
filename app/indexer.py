@@ -15,16 +15,12 @@ METADATA_QUESTIONS = {
     
     # Physical appearance
     "color_primary": "What is the main/dominant color of the animal?",
-    "size": "Is this animal small, medium, large in size?",
     
     # Behavior & action
     "action": "What is the animal doing? Be specific: sleeping, running, eating, playing, sitting, standing, swimming, flying, etc.",
-    "pose": "Describe the pose: lying down, standing, crouching, jumping, profile view, face close-up, etc.",
     
     # Environment & context
     "environment": "Where is this animal? Indoor, outdoor, forest, grassland, desert, snow, water, house, cage",
-    "colour-environment": "Describe the main colour environment:",
-    "lighting": "Describe the lighting: day, night",
     
     # Additional details
     "interaction": "Is the animal interacting with anything or anyone? Alone, with humans, with other animals, with what dominant objects?",
@@ -53,16 +49,15 @@ def index_folder(root_folder, weaviate_mode=True, dry_run=True, limit=None, deta
     # Select questions based on detailed_metadata flag
     if detailed_metadata:
         questions = METADATA_QUESTIONS
-        logger.info("Using DETAILED metadata extraction (10 fields)")
+        logger.info("Using DETAILED metadata extraction (6 fields)")
     else:
         questions = {
             "species": METADATA_QUESTIONS["species"],
             "color_primary": METADATA_QUESTIONS["color_primary"],
             "action": METADATA_QUESTIONS["action"],
             "environment": METADATA_QUESTIONS["environment"],
-            "lighting": METADATA_QUESTIONS["lighting"]
         }
-        logger.info("Using BASIC metadata extraction (5 fields)")
+        logger.info("Using BASIC metadata extraction (4 fields)")
 
     if weaviate_mode:
         client = get_weaviate_client()

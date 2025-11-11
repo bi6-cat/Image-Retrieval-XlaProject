@@ -6,8 +6,12 @@
   <link rel="stylesheet" href="styles_improved.css">
 </head>
 <body>
-  <h1>🐾 Animal Image Retrieval System</h1>
-  <p class="subtitle">Interactive search with relevance feedback</p>
+  <header>
+    <div class="header-content">
+      <h1>🐾 Animal Image Retrieval</h1>
+      <p class="subtitle">Intelligent search with visual feedback</p>
+    </div>
+  </header>
 
   <!-- Stats Bar -->
   <div id="statsBar" class="stats-bar">
@@ -52,23 +56,44 @@
   <div id="results" class="results-grid"></div>
 
   <div class="feedback-container">
-    <h3>💡 Refine Your Search</h3>
-    <p class="hint">
-      <strong>How it works:</strong><br>
-      1️⃣ Mark images: 👍 Relevant (want more like this) or 👎 Not Relevant (want less like this)<br>
-      2️⃣ Optionally describe what you want more specifically<br>
-      3️⃣ Click Refine to get better results!
-    </p>
-    <textarea id="feedbackText" placeholder="e.g., 'I want more fluffy cats with green eyes in natural lighting'"></textarea>
-    <button id="feedbackBtn" class="btn-feedback">✨ Refine Search</button>
-    <div id="feedbackStats" class="feedback-stats"></div>
+    <div>
+      <h3>💡 Refine Your Search</h3>
+      <p class="hint">
+        <strong>How it works:</strong><br>
+        👍 Mark images as <strong>Relevant</strong> (want more like this)<br>
+        👎 Mark images as <strong>Not Relevant</strong> (want less like this)<br>
+        ✨ Click <strong>Refine</strong> button below to improve results
+      </p>
+      <div id="feedbackStats" class="feedback-stats"></div>
+      
+      <!-- Visual refine button -->
+      <button id="visualRefineBtn" class="btn-refine">
+        ✨ Refine Search
+      </button>
+      
+      <!-- Optional text feedback (collapsible) -->
+      <details class="text-feedback-details">
+        <summary class="text-feedback-toggle">
+          📝 Add text description (optional)
+        </summary>
+        <div class="text-feedback-content">
+          <textarea id="feedbackText" 
+                    placeholder="e.g., 'fluffy white cat in snow' or 'Nike running shoes red color'&#10;&#10;💡 Tip: Text is especially useful when searching by image to add context!"></textarea>
+          <button id="manualRefineBtn" class="btn-refine-manual">
+            ✨ Refine with Text
+          </button>
+        </div>
+      </details>
+    </div>
   </div>
 
   <!-- Search History -->
   <div class="history-container">
-    <h3>📜 Your Recent Searches</h3>
-    <button id="toggleHistory" class="btn-secondary" onclick="toggleHistory()">Show History</button>
-    <div id="historyList" class="history-list" style="display:none"></div>
+    <div>
+      <h3>📜 Recent Searches</h3>
+      <button id="toggleHistory" class="btn-secondary" onclick="toggleHistory()">Show History</button>
+      <div id="historyList" class="history-list" style="display:none"></div>
+    </div>
   </div>
 
   <script src="script.js"></script>

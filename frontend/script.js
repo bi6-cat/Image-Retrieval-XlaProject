@@ -15,9 +15,10 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 document.getElementById("searchBtn").addEventListener("click", searchImages);
-document.getElementById("feedbackBtn").addEventListener("click", sendFeedback);
 document.getElementById("imageUpload").addEventListener("change", handleFileSelect);
 document.getElementById("searchByImageBtn").addEventListener("click", searchByImage);
+document.getElementById("manualRefineBtn").addEventListener("click", manualRefineWithText);
+document.getElementById("visualRefineBtn").addEventListener("click", visualRefine);
 
 // Enter key to search
 document.getElementById("queryInput").addEventListener("keypress", (e) => {
@@ -105,12 +106,16 @@ function showLoading(show) {
   document.getElementById('loading').style.display = show ? 'flex' : 'none';
 }
 
-function renderResults(results, query) {
+function renderResults(results, query, preserveFeedback = false) {
   const container = document.getElementById("results");
   const info = document.getElementById("resultsInfo");
   container.innerHTML = "";
-  likedImages = [];
-  dislikedImages = [];
+  
+  // Only reset feedback if not preserving (i.e., new search)
+  if (!preserveFeedback) {
+    likedImages = [];
+    dislikedImages = [];
+  }
 
   info.innerHTML = `Found <strong>${results.length}</strong> results for ${query}`;
 
@@ -119,17 +124,32 @@ function renderResults(results, query) {
     card.className = "image-card";
     card.dataset.imageId = item.id;
     
+    console.log(`Rendering card ${idx}: id=${item.id}, species=${item.meta?.species}`);
+    
     const img = document.createElement("img");
     img.src = item.meta?.file || "https://via.placeholder.com/200";
     img.alt = item.meta?.species || "Animal";
     img.loading = "lazy";
     img.onclick = () => openModal(img.src);
     
-    const info = document.createElement("div");
-    info.className = "card-info";
-    info.innerHTML = `
-      <span class="species">${item.meta?.species || 'Unknown'}</span>
-      <span class="score">${(item.score * 100).toFixed(1)}%</span>
+    // Optional: Add metadata overlay on hover (very subtle)
+    const overlay = document.createElement("div");
+    overlay.className = "card-overlay";
+    
+    let tagsHtml = '';
+    if (item.meta?.color) {
+      tagsHtml += `<span class="tag tag-color">${item.meta.color}</span>`;
+    }
+    if (item.meta?.action) {
+      tagsHtml += `<span class="tag tag-action">${item.meta.action}</span>`;
+    }
+    if (item.meta?.environment) {
+      tagsHtml += `<span class="tag tag-env">${item.meta.environment}</span>`;
+    }
+    
+    overlay.innerHTML = `
+      ${item.meta?.caption ? `<div class="caption-overlay">${item.meta.caption}</div>` : ''}
+      ${tagsHtml ? `<div class="tags-overlay">${tagsHtml}</div>` : ''}
     `;
     
     const feedbackBtns = document.createElement("div");
@@ -155,8 +175,18 @@ function renderResults(results, query) {
     feedbackBtns.appendChild(dislikeBtn);
     
     card.appendChild(img);
-    card.appendChild(info);
+    card.appendChild(overlay);
     card.appendChild(feedbackBtns);
+    
+    // Restore feedback state if preserving
+    if (preserveFeedback) {
+      if (likedImages.includes(item.id)) {
+        card.classList.add('liked');
+      } else if (dislikedImages.includes(item.id)) {
+        card.classList.add('disliked');
+      }
+    }
+    
     container.appendChild(card);
   });
 
@@ -164,11 +194,15 @@ function renderResults(results, query) {
 }
 
 function toggleFeedback(id, type, card) {
+  console.log(`toggleFeedback called: id=${id}, type=${type}`);
+  console.log(`Before: liked=${likedImages.length}, disliked=${dislikedImages.length}`);
+  
   if (type === 'like') {
-    // If already liked, remove like
+    // If already liked, remove like (toggle off)
     if (likedImages.includes(id)) {
       likedImages = likedImages.filter(x => x !== id);
       card.classList.remove('liked');
+      console.log(`Removed from liked`);
     } else {
       // Remove from dislike if was disliked
       dislikedImages = dislikedImages.filter(x => x !== id);
@@ -176,12 +210,14 @@ function toggleFeedback(id, type, card) {
       // Add to liked
       likedImages.push(id);
       card.classList.add('liked');
+      console.log(`Added to liked`);
     }
   } else if (type === 'dislike') {
-    // If already disliked, remove dislike
+    // If already disliked, remove dislike (toggle off)
     if (dislikedImages.includes(id)) {
       dislikedImages = dislikedImages.filter(x => x !== id);
       card.classList.remove('disliked');
+      console.log(`Removed from disliked`);
     } else {
       // Remove from like if was liked
       likedImages = likedImages.filter(x => x !== id);
@@ -189,13 +225,23 @@ function toggleFeedback(id, type, card) {
       // Add to disliked
       dislikedImages.push(id);
       card.classList.add('disliked');
+      console.log(`Added to disliked`);
     }
   }
+  
+  console.log(`After: liked=${likedImages.length}, disliked=${dislikedImages.length}`);
+  console.log(`Liked IDs:`, likedImages);
+  console.log(`Disliked IDs:`, dislikedImages);
+  
   updateFeedbackStats();
+  
+  // Remove auto-refine - user will click button instead
 }
 
 function updateFeedbackStats() {
   const stats = document.getElementById('feedbackStats');
+  const totalFeedback = likedImages.length + dislikedImages.length;
+  
   let html = '';
   if (likedImages.length > 0) {
     html += `<span class="stat-badge liked-badge">✅ ${likedImages.length} Relevant</span>`;
@@ -203,41 +249,108 @@ function updateFeedbackStats() {
   if (dislikedImages.length > 0) {
     html += `<span class="stat-badge disliked-badge">❌ ${dislikedImages.length} Not Relevant</span>`;
   }
-  if (likedImages.length === 0 && dislikedImages.length === 0) {
+  
+  if (totalFeedback === 0) {
     html = '<span class="hint-text">👆 Mark images as Relevant or Not Relevant above</span>';
   }
+  
   stats.innerHTML = html;
 }
 
-async function sendFeedback() {
-  const feedback_text = document.getElementById("feedbackText").value.trim();
-  if (!feedback_text && likedImages.length === 0 && dislikedImages.length === 0)
-    return alert("Please mark some images as relevant/not relevant or write feedback!");
+// Auto-refine function removed - now manual button only
 
-  showLoading(true);
+// Visual refine (like/dislike only)
+async function visualRefine() {
+  if (likedImages.length === 0 && dislikedImages.length === 0) {
+    return alert('Please mark some images as Relevant or Not Relevant first!');
+  }
+  
+  console.log('Visual refine:', { likedImages, dislikedImages, session_id });
+  showFeedbackLoading(true);
+  
   try {
     const res = await fetch(`${API_BASE}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        session_id,
-        feedback_text,
-        liked_image_ids: likedImages,
-        disliked_image_ids: dislikedImages,
+        session_id: session_id,
+        feedback_text: null,
+        liked_image_ids: likedImages || [],
+        disliked_image_ids: dislikedImages || [],
         alpha: 0.4,
         gamma: 0.5,
         top_k: 12
       })
     });
 
-    if (!res.ok) throw new Error('Feedback failed');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      console.error('Refine error:', errorData);
+      throw new Error(errorData.detail || 'Refine failed');
+    }
     const data = await res.json();
-    renderResults(data.results, 'refined search');
-    document.getElementById("feedbackText").value = "";
+    renderResults(data.results, 'refined search', true);  // Preserve feedback state
   } catch (err) {
     alert('Error: ' + err.message);
   } finally {
-    showLoading(false);
+    showFeedbackLoading(false);
+  }
+}
+
+// Manual refine with text feedback
+async function manualRefineWithText() {
+  const feedbackText = document.getElementById('feedbackText').value.trim();
+  
+  if (!feedbackText && likedImages.length === 0 && dislikedImages.length === 0) {
+    return alert('Please provide text feedback or mark some images!');
+  }
+  
+  showFeedbackLoading(true);
+  
+  try {
+    const res = await fetch(`${API_BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id,
+        feedback_text: feedbackText || null,
+        liked_image_ids: likedImages,
+        disliked_image_ids: dislikedImages,
+        alpha: 0.4,
+        gamma: 0.5,
+        w_text: 0.6,  // Higher weight for text when manually provided
+        w_like: 0.4,
+        top_k: 12
+      })
+    });
+
+    if (!res.ok) throw new Error('Refine failed');
+    const data = await res.json();
+    renderResults(data.results, feedbackText ? `refined: "${feedbackText}"` : 'refined search', true);  // Preserve feedback state
+    
+    // Clear text after successful refine
+    document.getElementById('feedbackText').value = '';
+  } catch (err) {
+    alert('Error: ' + err.message);
+  } finally {
+    showFeedbackLoading(false);
+  }
+}
+
+// Show loading state specifically for feedback
+function showFeedbackLoading(show) {
+  const stats = document.getElementById('feedbackStats');
+  if (show) {
+    const loadingBadge = document.createElement('span');
+    loadingBadge.className = 'stat-badge loading-badge';
+    loadingBadge.innerHTML = '⏳ Refining results...';
+    loadingBadge.id = 'loadingBadge';
+    stats.appendChild(loadingBadge);
+  } else {
+    const loadingBadge = document.getElementById('loadingBadge');
+    if (loadingBadge) {
+      loadingBadge.remove();
+    }
   }
 }
 
