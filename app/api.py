@@ -93,7 +93,10 @@ def search(req: SearchRequest):
 
     # Weaviate nearVector query with optional species filter
     try:
-        query_builder = client.query.get(CLASS_NAME, ["file","caption","species","extra"])
+        query_builder = (
+            client.query.get(CLASS_NAME, ["file","caption","species","extra"])
+            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
+        )
         
         # Add species filter if detected
         if species_filter:
@@ -172,7 +175,13 @@ async def search_by_image(
         qv = l2norm_np(qv)
         
         # Search in Weaviate
-        res = client.query.get(CLASS_NAME, ["file","caption","species"]).with_near_vector({"vector": qv.tolist()}).with_limit(top_k).do()
+        res = (
+            client.query.get(CLASS_NAME, ["file","caption","species"])
+            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
+            .with_near_vector({"vector": qv.tolist()})
+            .with_limit(top_k)
+            .do()
+        )
         objs = res.get("data", {}).get("Get", {}).get(CLASS_NAME, [])
         results = []
         for o in objs:
@@ -207,10 +216,11 @@ def feedback(req: FeedbackRequest):
         raise HTTPException(status_code=500, detail="Weaviate client not configured")
 
     # Log request for debugging
-    logger.info(f"Feedback request - session: {req.session_id}, liked: {len(req.liked_image_ids)}, disliked: {len(req.disliked_image_ids)}, text: {bool(req.feedback_text)}")
+    logger.info(f"Feedback request - session: {req.session_id}, liked: {len(req.liked_image_ids)}, disliked: {len(req.disliked_image_ids)}, text: {bool(req.feedback_text and req.feedback_text.strip())}")
 
     # Validate at least some feedback
-    if not req.liked_image_ids and not req.disliked_image_ids and not req.feedback_text:
+    has_text_feedback = req.feedback_text and req.feedback_text.strip()
+    if not req.liked_image_ids and not req.disliked_image_ids and not has_text_feedback:
         raise HTTPException(status_code=400, detail="Please provide at least one feedback: liked images, disliked images, or text")
 
     # get prev vector
@@ -221,7 +231,7 @@ def feedback(req: FeedbackRequest):
 
     # encode text feedback
     v_text = None
-    if req.feedback_text:
+    if has_text_feedback:
         v_text = encoder.encode_text([req.feedback_text])[0]
 
     # fetch liked image vectors from Weaviate by uuid
@@ -289,7 +299,13 @@ def feedback(req: FeedbackRequest):
 
     # search again in Weaviate
     try:
-        res = client.query.get(CLASS_NAME, ["file","caption","species"]).with_near_vector({"vector": v_new.tolist()}).with_limit(req.top_k).do()
+        res = (
+            client.query.get(CLASS_NAME, ["file","caption","species"])
+            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
+            .with_near_vector({"vector": v_new.tolist()})
+            .with_limit(req.top_k)
+            .do()
+        )
         objs = res.get("data", {}).get("Get", {}).get(CLASS_NAME, [])
         results = []
         for o in objs:

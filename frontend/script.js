@@ -65,6 +65,11 @@ async function searchByImage() {
 
     if (!res.ok) throw new Error('Search failed');
     const data = await res.json();
+    
+    // Clear feedback state on new search
+    likedImages = [];
+    dislikedImages = [];
+    
     renderResults(data.results, `image: ${uploadedFile.name}`);
     loadHistory();  // Refresh history
   } catch (err) {
@@ -93,6 +98,11 @@ async function searchImages() {
 
     if (!res.ok) throw new Error('Search failed');
     const data = await res.json();
+    
+    // Clear feedback state on new search
+    likedImages = [];
+    dislikedImages = [];
+    
     renderResults(data.results, `"${query}"`);
     loadHistory();  // Refresh history
   } catch (err) {
@@ -106,25 +116,33 @@ function showLoading(show) {
   document.getElementById('loading').style.display = show ? 'flex' : 'none';
 }
 
-function renderResults(results, query, preserveFeedback = false) {
+function renderResults(results, query) {
   const container = document.getElementById("results");
   const info = document.getElementById("resultsInfo");
   container.innerHTML = "";
   
-  // Only reset feedback if not preserving (i.e., new search)
-  if (!preserveFeedback) {
-    likedImages = [];
-    dislikedImages = [];
-  }
+  // Don't reset feedback arrays - keep existing state
+  // This allows feedback to persist during re-renders
 
   info.innerHTML = `Found <strong>${results.length}</strong> results for ${query}`;
 
   results.forEach((item, idx) => {
+    // Debug: check if item.id exists
+    if (!item.id) {
+      console.warn(`⚠️ Item at index ${idx} has no ID:`, item);
+    }
+    
     const card = document.createElement("div");
     card.className = "image-card";
-    card.dataset.imageId = item.id;
+    card.dataset.imageId = item.id || '';
     
-    console.log(`Rendering card ${idx}: id=${item.id}, species=${item.meta?.species}`);
+    // Restore feedback state if this image was previously marked
+    if (item.id && likedImages.includes(item.id)) {
+      card.classList.add('liked');
+    }
+    if (item.id && dislikedImages.includes(item.id)) {
+      card.classList.add('disliked');
+    }
     
     const img = document.createElement("img");
     img.src = item.meta?.file || "https://via.placeholder.com/200";
@@ -132,7 +150,7 @@ function renderResults(results, query, preserveFeedback = false) {
     img.loading = "lazy";
     img.onclick = () => openModal(img.src);
     
-    // Optional: Add metadata overlay on hover (very subtle)
+    // Metadata overlay on hover
     const overlay = document.createElement("div");
     overlay.className = "card-overlay";
     
@@ -160,15 +178,23 @@ function renderResults(results, query, preserveFeedback = false) {
     likeBtn.innerHTML = "👍 Relevant";
     likeBtn.onclick = (e) => {
       e.stopPropagation();
-      toggleFeedback(item.id, 'like', card);
+      if (!item.id) {
+        console.error('❌ Cannot like: item.id is missing!', item);
+        return;
+      }
+      toggleLike(item.id, card);
     };
     
     const dislikeBtn = document.createElement("button");
     dislikeBtn.className = "feedback-btn dislike-btn";
-    dislikeBtn.innerHTML = "� Not Relevant";
+    dislikeBtn.innerHTML = "👎 Not Relevant";
     dislikeBtn.onclick = (e) => {
       e.stopPropagation();
-      toggleFeedback(item.id, 'dislike', card);
+      if (!item.id) {
+        console.error('❌ Cannot dislike: item.id is missing!', item);
+        return;
+      }
+      toggleDislike(item.id, card);
     };
     
     feedbackBtns.appendChild(likeBtn);
@@ -178,64 +204,57 @@ function renderResults(results, query, preserveFeedback = false) {
     card.appendChild(overlay);
     card.appendChild(feedbackBtns);
     
-    // Restore feedback state if preserving
-    if (preserveFeedback) {
-      if (likedImages.includes(item.id)) {
-        card.classList.add('liked');
-      } else if (dislikedImages.includes(item.id)) {
-        card.classList.add('disliked');
-      }
-    }
-    
     container.appendChild(card);
   });
 
   updateFeedbackStats();
 }
 
-function toggleFeedback(id, type, card) {
-  console.log(`toggleFeedback called: id=${id}, type=${type}`);
-  console.log(`Before: liked=${likedImages.length}, disliked=${dislikedImages.length}`);
+// Simple toggle functions - no complex logic
+function toggleLike(id, card) {
+  const index = likedImages.indexOf(id);
   
-  if (type === 'like') {
-    // If already liked, remove like (toggle off)
-    if (likedImages.includes(id)) {
-      likedImages = likedImages.filter(x => x !== id);
-      card.classList.remove('liked');
-      console.log(`Removed from liked`);
-    } else {
-      // Remove from dislike if was disliked
-      dislikedImages = dislikedImages.filter(x => x !== id);
+  if (index > -1) {
+    // Already liked, remove it
+    likedImages.splice(index, 1);
+    card.classList.remove('liked');
+  } else {
+    // Not liked yet, add it
+    // First remove from disliked if it's there
+    const dislikeIndex = dislikedImages.indexOf(id);
+    if (dislikeIndex > -1) {
+      dislikedImages.splice(dislikeIndex, 1);
       card.classList.remove('disliked');
-      // Add to liked
-      likedImages.push(id);
-      card.classList.add('liked');
-      console.log(`Added to liked`);
     }
-  } else if (type === 'dislike') {
-    // If already disliked, remove dislike (toggle off)
-    if (dislikedImages.includes(id)) {
-      dislikedImages = dislikedImages.filter(x => x !== id);
-      card.classList.remove('disliked');
-      console.log(`Removed from disliked`);
-    } else {
-      // Remove from like if was liked
-      likedImages = likedImages.filter(x => x !== id);
-      card.classList.remove('liked');
-      // Add to disliked
-      dislikedImages.push(id);
-      card.classList.add('disliked');
-      console.log(`Added to disliked`);
-    }
+    // Then add to liked
+    likedImages.push(id);
+    card.classList.add('liked');
   }
   
-  console.log(`After: liked=${likedImages.length}, disliked=${dislikedImages.length}`);
-  console.log(`Liked IDs:`, likedImages);
-  console.log(`Disliked IDs:`, dislikedImages);
+  updateFeedbackStats();
+}
+
+function toggleDislike(id, card) {
+  const index = dislikedImages.indexOf(id);
+  
+  if (index > -1) {
+    // Already disliked, remove it
+    dislikedImages.splice(index, 1);
+    card.classList.remove('disliked');
+  } else {
+    // Not disliked yet, add it
+    // First remove from liked if it's there
+    const likeIndex = likedImages.indexOf(id);
+    if (likeIndex > -1) {
+      likedImages.splice(likeIndex, 1);
+      card.classList.remove('liked');
+    }
+    // Then add to disliked
+    dislikedImages.push(id);
+    card.classList.add('disliked');
+  }
   
   updateFeedbackStats();
-  
-  // Remove auto-refine - user will click button instead
 }
 
 function updateFeedbackStats() {
@@ -265,31 +284,59 @@ async function visualRefine() {
     return alert('Please mark some images as Relevant or Not Relevant first!');
   }
   
-  console.log('Visual refine:', { likedImages, dislikedImages, session_id });
+  console.log('=== VISUAL REFINE DEBUG ===');
+  console.log('likedImages:', likedImages);
+  console.log('dislikedImages:', dislikedImages);
+  console.log('likedImages type:', typeof likedImages, Array.isArray(likedImages));
+  console.log('dislikedImages type:', typeof dislikedImages, Array.isArray(dislikedImages));
+  
+  // Filter out null/undefined values
+  const validLikedIds = likedImages.filter(id => id != null && id !== '');
+  const validDislikedIds = dislikedImages.filter(id => id != null && id !== '');
+  
+  console.log('After filtering:');
+  console.log('validLikedIds:', validLikedIds);
+  console.log('validDislikedIds:', validDislikedIds);
+  
+  const payload = {
+    session_id: session_id,
+    feedback_text: "",  // Empty string instead of null
+    liked_image_ids: validLikedIds,
+    disliked_image_ids: validDislikedIds,
+    alpha: 0.4,
+    gamma: 0.5,
+    top_k: 12
+  };
+  
+  console.log('Payload:', JSON.stringify(payload, null, 2));
+  
   showFeedbackLoading(true);
   
   try {
     const res = await fetch(`${API_BASE}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session_id: session_id,
-        feedback_text: null,
-        liked_image_ids: likedImages || [],
-        disliked_image_ids: dislikedImages || [],
-        alpha: 0.4,
-        gamma: 0.5,
-        top_k: 12
-      })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
-      console.error('Refine error:', errorData);
-      throw new Error(errorData.detail || 'Refine failed');
+      console.error('❌ API Error Response:', errorData);
+      if (errorData.detail && Array.isArray(errorData.detail)) {
+        console.error('❌ Validation Errors:', errorData.detail);
+        errorData.detail.forEach((err, i) => {
+          console.error(`  Error ${i+1}:`, err);
+        });
+      }
+      throw new Error(JSON.stringify(errorData.detail) || 'Refine failed');
     }
     const data = await res.json();
-    renderResults(data.results, 'refined search', true);  // Preserve feedback state
+    
+    // Clear feedback state before rendering refined results
+    likedImages = [];
+    dislikedImages = [];
+    
+    renderResults(data.results, 'refined search');
   } catch (err) {
     alert('Error: ' + err.message);
   } finally {
@@ -313,7 +360,7 @@ async function manualRefineWithText() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id,
-        feedback_text: feedbackText || null,
+        feedback_text: feedbackText || "",  // Empty string instead of null
         liked_image_ids: likedImages,
         disliked_image_ids: dislikedImages,
         alpha: 0.4,
@@ -324,12 +371,18 @@ async function manualRefineWithText() {
       })
     });
 
-    if (!res.ok) throw new Error('Refine failed');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(errorData.detail || 'Refine failed');
+    }
     const data = await res.json();
-    renderResults(data.results, feedbackText ? `refined: "${feedbackText}"` : 'refined search', true);  // Preserve feedback state
     
-    // Clear text after successful refine
+    // Clear feedback state and text area
+    likedImages = [];
+    dislikedImages = [];
     document.getElementById('feedbackText').value = '';
+    
+    renderResults(data.results, 'refined search with text');
   } catch (err) {
     alert('Error: ' + err.message);
   } finally {
