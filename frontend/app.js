@@ -675,13 +675,111 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('modalClose').addEventListener('click', closeModal);
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeModal();
+        if (e.key === 'Escape') {
+            closeModal();
+            closeUploadModal();
+        }
+    });
+
+    // Upload modal
+    document.getElementById('uploadBtn').addEventListener('click', openUploadModal);
+    document.getElementById('uploadModalClose').addEventListener('click', closeUploadModal);
+    document.getElementById('uploadForm').addEventListener('submit', handleUpload);
+    
+    // Upload preview
+    const uploadFileInput = document.getElementById('uploadFileInput');
+    const uploadPreviewZone = document.getElementById('uploadPreviewZone');
+    const uploadPreview = document.getElementById('uploadPreview');
+    
+    uploadPreviewZone.addEventListener('click', () => uploadFileInput.click());
+    
+    uploadFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                uploadPreview.src = e.target.result;
+                uploadPreview.classList.remove('hidden');
+                uploadPreviewZone.querySelector('.upload-preview-content p').style.display = 'none';
+                uploadPreviewZone.querySelector('.upload-preview-icon').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
     });
 
     // Refresh buttons
     document.getElementById('refreshHistoryBtn').addEventListener('click', loadHistory);
     document.getElementById('refreshAnalyticsBtn').addEventListener('click', loadStats);
 });
+
+// Upload functions
+function openUploadModal() {
+    document.getElementById('uploadModal').classList.remove('hidden');
+}
+
+function closeUploadModal() {
+    document.getElementById('uploadModal').classList.add('hidden');
+    document.getElementById('uploadForm').reset();
+    document.getElementById('uploadPreview').classList.add('hidden');
+    document.getElementById('uploadPreview').src = '';
+    document.getElementById('uploadPreviewZone').querySelector('.upload-preview-content p').style.display = 'block';
+    document.getElementById('uploadPreviewZone').querySelector('.upload-preview-icon').style.display = 'block';
+}
+
+async function handleUpload(e) {
+    e.preventDefault();
+    
+    const fileInput = document.getElementById('uploadFileInput');
+    const caption = document.getElementById('uploadCaption').value;
+    const species = document.getElementById('uploadSpecies').value;
+    const submitBtn = e.target.querySelector('.submit-upload-btn');
+    
+    if (!fileInput.files[0]) {
+        showToast('Vui lòng chọn ảnh', 'error');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('caption', caption);
+    formData.append('species', species);
+    formData.append('user_id', state.userId);
+    
+    try {
+        // Show loading state
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang xử lý...';
+        showToast('Đang tải lên và xử lý...', 'info');
+        
+        const response = await fetch(`${API_BASE}/upload-image`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error('Upload failed');
+        }
+        
+        const data = await response.json();
+        const timing = data.processing_time;
+        showToast(
+            `✅ Thành công! Tổng thời gian: ${timing.total}s (Encode: ${timing.encode_vector}s, DB: ${timing.database_insert}s)`,
+            'success'
+        );
+        closeUploadModal();
+        
+        // Reload stats
+        loadStats();
+        
+    } catch (error) {
+        console.error('Upload error:', error);
+        showToast('Lỗi khi tải ảnh lên', 'error');
+    } finally {
+        // Restore button state
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-check"></i> Tải lên';
+    }
+}
 
 // Make functions globally accessible for inline handlers
 window.toggleLike = toggleLike;

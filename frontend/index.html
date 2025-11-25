@@ -31,6 +31,10 @@
                 </a>
             </nav>
             <div class="header-actions">
+                <button class="upload-btn" id="uploadBtn">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <span>Đóng góp ảnh</span>
+                </button>
                 <div class="status-indicator" id="statusIndicator">
                     <span class="status-dot"></span>
                     <span class="status-text">Đang kết nối...</span>
@@ -176,7 +180,7 @@
                         <input 
                             type="text" 
                             id="feedbackText" 
-                            placeholder="Thêm mô tả để tinh chỉnh (VD: tôi muốn thấy nhiều mèo trắng hơn)"
+                            placeholder="Thêm mô tả để tinh chỉnh (VD: I want to see more white cats)"
                             class="feedback-input"
                         >
                     </div>
@@ -330,6 +334,38 @@
                     <span class="modal-species"><i class="fas fa-paw"></i> <span id="modalSpecies"></span></span>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div class="modal hidden" id="uploadModal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content upload-modal-content">
+            <button class="modal-close" id="uploadModalClose">
+                <i class="fas fa-times"></i>
+            </button>
+            <h2><i class="fas fa-cloud-upload-alt"></i> Đóng góp hình ảnh</h2>
+            <form id="uploadForm" class="upload-form">
+                <div class="upload-preview-zone" id="uploadPreviewZone">
+                    <input type="file" id="uploadFileInput" accept="image/*" required>
+                    <div class="upload-preview-content">
+                        <i class="fas fa-image upload-preview-icon"></i>
+                        <p>Click hoặc kéo thả ảnh vào đây</p>
+                        <img id="uploadPreview" class="upload-preview-img hidden" src="" alt="Preview">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="uploadCaption"><i class="fas fa-comment"></i> Mô tả (không bắt buộc)</label>
+                    <input type="text" id="uploadCaption" placeholder="VD: A cute cat sleeping on a sofa">
+                </div>
+                <div class="form-group">
+                    <label for="uploadSpecies"><i class="fas fa-paw"></i> Loài (không bắt buộc)</label>
+                    <input type="text" id="uploadSpecies" placeholder="VD: cat, dog, bird...">
+                </div>
+                <button type="submit" class="submit-upload-btn">
+                    <i class="fas fa-check"></i> Tải lên
+                </button>
+            </form>
         </div>
     </div>
 

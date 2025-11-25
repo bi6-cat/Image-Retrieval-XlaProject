@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import numpy as np, json
+import numpy as np, json, os
 from PIL import Image
 import io
 from datetime import datetime
@@ -506,6 +506,106 @@ def get_analytics():
     except Exception as e:
         logger.exception("Analytics error: %s", e)
         return {"error": str(e)}
+
+@app.post("/upload-image")
+async def upload_image_to_db(
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    species: str = Form(""),
+    user_id: str = Form("anonymous")
+):
+    """Upload and index a new image to clip-base-p32 model only"""
+    import time
+    start_time = time.time()
+    
+    if client is None:
+        raise HTTPException(status_code=500, detail="Weaviate client not configured")
+    
+    try:
+        # Read and validate image
+        image_data = await file.read()
+        image = Image.open(io.BytesIO(image_data)).convert("RGB")
+        read_time = time.time() - start_time
+        
+        # Generate unique filename
+        import uuid
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_ext = os.path.splitext(file.filename)[1] or '.jpg'
+        unique_filename = f"user_upload_{timestamp}_{uuid.uuid4().hex[:8]}{file_ext}"
+        
+        # Determine species from caption or default
+        if not species:
+            species = "uploaded"  # default category
+        
+        # Save image to data directory
+        upload_dir = f"data/full/{species}"
+        os.makedirs(upload_dir, exist_ok=True)
+        image_path = os.path.join(upload_dir, unique_filename)
+        image.save(image_path)
+        save_time = time.time() - start_time - read_time
+        
+        relative_path = f"full/{species}/{unique_filename}"
+        
+        # Index to clip-base-p32 only
+        import weaviate.classes as wvc
+        model_key = "clip-base-p32"
+        model_info = settings.AVAILABLE_MODELS[model_key]
+        
+        # Get encoder for this model
+        encode_start = time.time()
+        model_encoder = get_encoder_for_model(model_key)
+        collection_name = model_info["collection"]
+        
+        # Encode image
+        vector = model_encoder.encode_images([image])[0]
+        vector = l2norm_np(vector)
+        encode_time = time.time() - encode_start
+        
+        # Prepare object
+        obj_data = {
+            "properties": {
+                "file": relative_path,
+                "caption": caption or f"User uploaded image",
+                "species": species,
+                "extra": json.dumps({"uploaded_by": user_id, "uploaded_at": timestamp}),
+                "model_key": model_key
+            },
+            "vector": vector.tolist()
+        }
+        
+        # Insert to Weaviate
+        db_start = time.time()
+        collection = client.collections.get(collection_name)
+        uuid_result = collection.data.insert(
+            properties=obj_data["properties"],
+            vector=obj_data["vector"]
+        )
+        db_time = time.time() - db_start
+        
+        total_time = time.time() - start_time
+        
+        logger.info(f"Upload completed in {total_time:.2f}s - Read: {read_time:.2f}s, Save: {save_time:.2f}s, Encode: {encode_time:.2f}s, DB: {db_time:.2f}s")
+        
+        return {
+            "success": True,
+            "message": "Image uploaded and indexed successfully",
+            "image_path": relative_path,
+            "collection": collection_name,
+            "uuid": str(uuid_result),
+            "species": species,
+            "processing_time": {
+                "total": round(total_time, 2),
+                "read_image": round(read_time, 2),
+                "save_file": round(save_time, 2),
+                "encode_vector": round(encode_time, 2),
+                "database_insert": round(db_time, 2)
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Upload error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 app.mount("/data", StaticFiles(directory="data"), name="data")
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
