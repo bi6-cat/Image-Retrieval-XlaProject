@@ -15,36 +15,23 @@ from app.weaviate_client import get_weaviate_client, CLASS_NAME, get_collection_
 from app.deps import get_redis, redis_set_json, redis_get_json
 import weaviate
 
-# Cache for model encoders - lazy loading to save GPU memory
+# Cache for model encoders - keep all models loaded
 model_encoders = {}
-current_model_key = None  # Track which model is currently loaded
 
 def get_encoder_for_model(model_key):
-    """Get or create encoder for specific model (lazy loading, only one model at a time)"""
-    global current_model_key
-    
+    """Get or create encoder for specific model (keep all models loaded)"""
     if model_key not in settings.AVAILABLE_MODELS:
         model_key = "clip-base-p32"  # fallback to default
     
-    # If requesting same model, return cached
+    # If already loaded, return cached
     if model_key in model_encoders:
         return model_encoders[model_key]
     
-    # Clear other models to save GPU memory (keep only one model loaded)
-    if current_model_key and current_model_key != model_key:
-        logger.info(f"Unloading model {current_model_key} to free GPU memory...")
-        if current_model_key in model_encoders:
-            del model_encoders[current_model_key]
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
-    # Load the requested model
+    # Load the requested model (keep existing models in memory)
     model_id = settings.AVAILABLE_MODELS[model_key]["model_id"]
     logger.info(f"Loading encoder for {model_key}: {model_id}")
     model_encoders[model_key] = Encoder(model_name=model_id)
-    current_model_key = model_key
-    logger.info(f"✓ Loaded encoder for {model_key}")
+    logger.info(f"✓ Loaded encoder for {model_key}. Total models loaded: {len(model_encoders)}")
     
     return model_encoders[model_key]
 

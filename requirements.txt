@@ -1,14 +1,14 @@
+# Core dependencies - Python 3.9+ compatible
 fastapi
 uvicorn[standard]
 numpy
-weaviate-client
-sentence-transformers
+weaviate-client>=4.0
+torch
+torchvision
 transformers
 Pillow
 tqdm
 redis
-faiss-gpu-cu12
-faiss-cpu
 python-dotenv
 pydantic
 jinja2
