@@ -32,7 +32,6 @@ METADATA_QUESTIONS = {
     
     # Image composition
     "number_of_animals": "How many animals? one, two, few (3-5), several (6+)",
-    "camera_angle": "Camera angle? front view, side view, close-up, full body",
 }
 
 # Knowledge base for species-specific information (used when species is known)

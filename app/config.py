@@ -14,19 +14,21 @@ class Settings:
     ENCODER_BACKEND = os.getenv("ENCODER_BACKEND", "hf_clip")
     CLIP_MODEL = os.getenv("CLIP_MODEL", "openai/clip-vit-base-patch32")
     
-    # Multi-model support (Vietnamese-friendly)
+    # Multi-model support
     AVAILABLE_MODELS = {
-        "clip-base": {
-            "name": "CLIP Base",
+        "clip-base-p32": {
+            "name": "CLIP Base Patch32",
             "model_id": "openai/clip-vit-base-patch32",
             "collection": "AnimalImageClipBase",
-            "description": "Fast, good for English (512-dim)"
+            "description": "Nhanh nhất, patch lớn (512-dim)",
+            "vector_dim": 512
         },
-        "clip-large": {
-            "name": "CLIP Large",
-            "model_id": "openai/clip-vit-large-patch14",
-            "collection": "AnimalImageClipLarge",
-            "description": "More accurate, slower (768-dim)"
+        "clip-base-p16": {
+            "name": "CLIP Base Patch16",
+            "model_id": "openai/clip-vit-base-patch16",
+            "collection": "AnimalImageClipBaseP16",
+            "description": "Chính xác hơn, patch nhỏ (512-dim)",
+            "vector_dim": 512
         }
     }
 

@@ -15,18 +15,37 @@ from app.weaviate_client import get_weaviate_client, CLASS_NAME, get_collection_
 from app.deps import get_redis, redis_set_json, redis_get_json
 import weaviate
 
-# Cache for model encoders
+# Cache for model encoders - lazy loading to save GPU memory
 model_encoders = {}
+current_model_key = None  # Track which model is currently loaded
 
 def get_encoder_for_model(model_key):
-    """Get or create encoder for specific model"""
-    if model_key not in model_encoders:
-        if model_key in settings.AVAILABLE_MODELS:
-            model_id = settings.AVAILABLE_MODELS[model_key]["model_id"]
-            model_encoders[model_key] = Encoder(model_name=model_id)
-            logger.info(f"Loaded encoder for {model_key}: {model_id}")
-        else:
-            model_encoders[model_key] = encoder  # fallback to default
+    """Get or create encoder for specific model (lazy loading, only one model at a time)"""
+    global current_model_key
+    
+    if model_key not in settings.AVAILABLE_MODELS:
+        model_key = "clip-base-p32"  # fallback to default
+    
+    # If requesting same model, return cached
+    if model_key in model_encoders:
+        return model_encoders[model_key]
+    
+    # Clear other models to save GPU memory (keep only one model loaded)
+    if current_model_key and current_model_key != model_key:
+        logger.info(f"Unloading model {current_model_key} to free GPU memory...")
+        if current_model_key in model_encoders:
+            del model_encoders[current_model_key]
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    
+    # Load the requested model
+    model_id = settings.AVAILABLE_MODELS[model_key]["model_id"]
+    logger.info(f"Loading encoder for {model_key}: {model_id}")
+    model_encoders[model_key] = Encoder(model_name=model_id)
+    current_model_key = model_key
+    logger.info(f"✓ Loaded encoder for {model_key}")
+    
     return model_encoders[model_key]
 
 app = FastAPI(title="Image Retrieval (Multi-Model)")
@@ -40,8 +59,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-encoder = Encoder()
+# Default encoder (lazy load on first use)
+encoder = None
 client = None
 try:
     client = get_weaviate_client()
@@ -49,15 +68,8 @@ try:
 except Exception as e:
     logger.warning("Weaviate client not configured: %s", e)
 
-# Preload all model encoders at startup
-logger.info("Preloading model encoders...")
-for model_key, model_info in settings.AVAILABLE_MODELS.items():
-    try:
-        model_id = model_info["model_id"]
-        model_encoders[model_key] = Encoder(model_name=model_id)
-        logger.info(f"✓ Loaded encoder for {model_key}: {model_id}")
-    except Exception as e:
-        logger.error(f"✗ Failed to load {model_key}: {e}")
+# DON'T preload all models - use lazy loading to save GPU memory
+logger.info("Models will be loaded on demand (lazy loading to save GPU memory)")
 
 # Redis for session
 r = get_redis()
@@ -73,7 +85,7 @@ class SearchRequest(BaseModel):
     query_image_vector: list = None
     top_k: int = 20
     user_id: Optional[str] = "anonymous"
-    model_key: Optional[str] = "clip-base"  # default model
+    model_key: Optional[str] = "clip-base-p32"  # default model
 
 class SearchResponse(BaseModel):
     results: list
@@ -188,7 +200,7 @@ class FeedbackRequest(BaseModel):
     alpha: float = 0.4
     gamma: float = 0.5
     top_k: int = 20
-    model_key: Optional[str] = "clip-base"
+    model_key: Optional[str] = "clip-base-p32"
 
 class FeedbackResponse(BaseModel):
     results: list
@@ -201,7 +213,7 @@ async def search_by_image(
     file: UploadFile = File(...), 
     top_k: int = Form(20),
     user_id: str = Form("anonymous"),
-    model_key: str = Form("clip-base")
+    model_key: str = Form("clip-base-p32")
 ):
     """Search by uploading an image"""
     if client is None:
@@ -383,7 +395,8 @@ def health_check():
         "status": "healthy",
         "weaviate": client is not None,
         "redis": r is not None,
-        "encoder": encoder is not None
+        "encoder_ready": True,  # Lazy loading - always ready
+        "loaded_models": list(model_encoders.keys())
     }
 
 @app.get("/models")
@@ -398,7 +411,7 @@ def get_available_models():
             "model_id": info["model_id"],
             "collection": info["collection"]
         })
-    return {"models": models, "default": "clip-base"}
+    return {"models": models, "default": "clip-base-p32"}
 
 @app.get("/stats")
 def get_stats():
