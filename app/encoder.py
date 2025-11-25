@@ -3,11 +3,13 @@ from app.utils import l2norm_np, logger
 import numpy as np
 import torch
 
-def load_hf_clip(device=None):
+def load_hf_clip(model_name=None, device=None):
     from transformers import CLIPProcessor, CLIPModel
+    model_name = model_name or settings.CLIP_MODEL
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    logger.info(f"Loading CLIP model: {model_name}")
+    model = CLIPModel.from_pretrained(model_name).to(device)
+    processor = CLIPProcessor.from_pretrained(model_name)
     return model, processor, device
 
 def load_st_model(name: str):
@@ -16,15 +18,16 @@ def load_st_model(name: str):
     return model
 
 class Encoder:
-    def __init__(self, backend=None):
+    def __init__(self, backend=None, model_name=None):
         self.backend = backend or settings.ENCODER_BACKEND
+        self.model_name = model_name or settings.CLIP_MODEL
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info("Encoder backend=%s device=%s", self.backend, self.device)
+        logger.info("Encoder backend=%s model=%s device=%s", self.backend, self.model_name, self.device)
         if self.backend == "sentence_transformers":
             # adjust model id as needed
-            self.model = load_st_model("clip-ViT-B-32")
+            self.model = load_st_model(self.model_name if "clip" in self.model_name.lower() else "clip-ViT-B-32")
         else:
-            self.model, self.processor, self.device = load_hf_clip(self.device)
+            self.model, self.processor, self.device = load_hf_clip(self.model_name, self.device)
 
     def encode_text(self, texts):
         if self.backend == "sentence_transformers":

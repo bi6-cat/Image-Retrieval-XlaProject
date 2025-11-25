@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>System Architecture Diagram — Animals Retrieval</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Inter, Arial, sans-serif; margin: 18px; background:#f7fafc; color:#111; }
+    h1 { text-align:center; margin-bottom:6px; }
+    p { text-align:center; margin-top:0; margin-bottom:18px; color:#444; }
+    #diagram { max-width:1200px; margin: 0 auto; background:white; padding:18px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.06); }
+    .controls { text-align:center; margin:12px 0; }
+    button { padding:8px 12px; margin:0 6px; border-radius:6px; border:1px solid #ddd; background:white; cursor:pointer; }
+    button:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  </style>
+
+  <!-- Mermaid CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <h1>Kiến trúc hệ thống — Animal Image Retrieval</h1>
+  <p>(Frontend → FastAPI → Weaviate, Redis, CLIP/BLIP)</p>
+
+  <div class="controls">
+    <button id="btnRefresh">Refresh Diagram</button>
+    <button id="btnSvg">Export SVG</button>
+    <button id="btnPng">Export PNG</button>
+  </div>
+
+  <div id="diagram">
+    <!-- Mermaid diagram -->
+    <div class="mermaid" id="mermaidDiagram">
+graph TD
+  subgraph UI [USER INTERFACE<br/>(Frontend - HTML/CSS/JS)]
+    UIBox[/"Frontend (HTML/CSS/JS)"/]
+  end
+
+  UIBox -->|HTTP / REST API| API[/"FASTAPI BACKEND<br/>(app/api.py - port 8000)"/]
+
+  subgraph BackendSubsystem[""]
+    API --> SearchEngine["Search Engine<br/>(retrieve)"]
+    API --> FeedbackSys["Feedback System<br/>(session, like, text)"]
+    API --> Analytics["Analytics & Logging"]
+  end
+
+  subgraphInfra["Infrastructure"]
+    Weaviate["WEAVIATE<br/>Vector Store"]
+    Redis["REDIS<br/>Session Cache"]
+    Models["CLIP / BLIP<br/>(Encoder Models)"]
+  end
+
+  SearchEngine --> Weaviate
+  FeedbackSys --> Redis
+  FeedbackSys --> Weaviate
+  API --> Models
+  Models --> Weaviate
+
+  style UIBox fill:#e6f0ff,stroke:#3b82f6,stroke-width:2px
+  style API fill:#fff7e6,stroke:#f59e0b,stroke-width:2px
+  style SearchEngine fill:#f0fdf4,stroke:#10b981
+  style FeedbackSys fill:#fff0f6,stroke:#ec4899
+  style Analytics fill:#f8fafc,stroke:#64748b
+  style Weaviate fill:#eef2ff,stroke:#6366f1
+  style Redis fill:#fff7ed,stroke:#fb923c
+  style Models fill:#f1f5f9,stroke:#374151
+
+    </div>
+  </div>
+
+<script>
+  // init mermaid
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+
+  // refresh button
+  document.getElementById('btnRefresh').addEventListener('click', () => {
+    // re-render
+    const el = document.getElementById('mermaidDiagram');
+    const txt = el.innerText;
+    el.innerHTML = txt;
+    mermaid.init(undefined, el);
+  });
+
+  // export functions (SVG and PNG)
+  async function exportSvg() {
+    const svg = document.querySelector('#diagram .mermaid svg');
+    if (!svg) { alert('SVG chưa được render'); return; }
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svg);
+    const blob = new Blob([svgStr], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'architecture.svg'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportPng() {
+    const svg = document.querySelector('#diagram .mermaid svg');
+    if (!svg) { alert('SVG chưa được render'); return; }
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svg);
+    const img = new Image();
+    const svgBlob = new Blob([svgStr], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      // white background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0);
+      canvas.toBlob((blob) => {
+        const link = document.createElement('a');
+        link.download = 'architecture.png';
+        link.href = URL.createObjectURL(blob);
+        link.click();
+      });
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
+
+  document.getElementById('btnSvg').addEventListener('click', exportSvg);
+  document.getElementById('btnPng').addEventListener('click', exportPng);
+</script>
+</body>
+</html>

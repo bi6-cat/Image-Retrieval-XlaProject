@@ -11,11 +11,25 @@ from typing import Optional, List
 from app.config import settings
 from app.utils import logger, l2norm_np
 from app.encoder import Encoder
-from app.weaviate_client import get_weaviate_client, CLASS_NAME
+from app.weaviate_client import get_weaviate_client, CLASS_NAME, get_collection_name
 from app.deps import get_redis, redis_set_json, redis_get_json
 import weaviate
 
-app = FastAPI(title="Image Retrieval (Weaviate)")
+# Cache for model encoders
+model_encoders = {}
+
+def get_encoder_for_model(model_key):
+    """Get or create encoder for specific model"""
+    if model_key not in model_encoders:
+        if model_key in settings.AVAILABLE_MODELS:
+            model_id = settings.AVAILABLE_MODELS[model_key]["model_id"]
+            model_encoders[model_key] = Encoder(model_name=model_id)
+            logger.info(f"Loaded encoder for {model_key}: {model_id}")
+        else:
+            model_encoders[model_key] = encoder  # fallback to default
+    return model_encoders[model_key]
+
+app = FastAPI(title="Image Retrieval (Multi-Model)")
 
 # Add CORS middleware
 app.add_middleware(
@@ -34,8 +48,24 @@ try:
     logger.info("Weaviate client ready")
 except Exception as e:
     logger.warning("Weaviate client not configured: %s", e)
+
+# Preload all model encoders at startup
+logger.info("Preloading model encoders...")
+for model_key, model_info in settings.AVAILABLE_MODELS.items():
+    try:
+        model_id = model_info["model_id"]
+        model_encoders[model_key] = Encoder(model_name=model_id)
+        logger.info(f"✓ Loaded encoder for {model_key}: {model_id}")
+    except Exception as e:
+        logger.error(f"✗ Failed to load {model_key}: {e}")
+
 # Redis for session
 r = get_redis()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    if client:
+        client.close()
 
 class SearchRequest(BaseModel):
     session_id: str
@@ -43,6 +73,7 @@ class SearchRequest(BaseModel):
     query_image_vector: list = None
     top_k: int = 20
     user_id: Optional[str] = "anonymous"
+    model_key: Optional[str] = "clip-base"  # default model
 
 class SearchResponse(BaseModel):
     results: list
@@ -62,10 +93,15 @@ def search(req: SearchRequest):
     if client is None:
         raise HTTPException(status_code=500, detail="Weaviate client not configured")
 
+    # Get model-specific encoder and collection
+    model_encoder = get_encoder_for_model(req.model_key)
+    collection_name = get_collection_name(req.model_key)
+    logger.info(f"Search with model: {req.model_key}, collection: {collection_name}")
+
     if req.query_image_vector is not None:
         qv = np.asarray(req.query_image_vector, dtype=np.float32)
     elif req.query_text:
-        qv = encoder.encode_text([req.query_text])[0]
+        qv = model_encoder.encode_text([req.query_text])[0]
     else:
         raise HTTPException(status_code=400, detail="Provide query_text or query_image_vector")
     qv = l2norm_np(qv)
@@ -93,31 +129,35 @@ def search(req: SearchRequest):
 
     # Weaviate nearVector query with optional species filter
     try:
-        query_builder = (
-            client.query.get(CLASS_NAME, ["file","caption","species","extra"])
-            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
-        )
+        import weaviate.classes as wvc
+        collection = client.collections.get(collection_name)
         
-        # Add species filter if detected
+        # Build query with optional species filter
         if species_filter:
-            where_filter = {
-                "path": ["species"],
-                "operator": "Equal",
-                "valueString": species_filter
-            }
-            query_builder = query_builder.with_where(where_filter)
             logger.info(f"Applying species filter: {species_filter}")
+            response = collection.query.near_vector(
+                near_vector=qv.tolist(),
+                limit=req.top_k,
+                return_metadata=wvc.query.MetadataQuery(certainty=True, distance=True),
+                filters=wvc.query.Filter.by_property("species").equal(species_filter)
+            )
+        else:
+            response = collection.query.near_vector(
+                near_vector=qv.tolist(),
+                limit=req.top_k,
+                return_metadata=wvc.query.MetadataQuery(certainty=True, distance=True)
+            )
         
-        res = query_builder.with_near_vector({"vector": qv.tolist()}).with_limit(req.top_k).do()
-        objs = res.get("data", {}).get("Get", {}).get(CLASS_NAME, [])
         results = []
-        # each obj may have _additional containing id and vector/score
-        for o in objs:
-            add = o.get("_additional", {})
+        for obj in response.objects:
             results.append({
-                "id": add.get("id"),           # this is uuid we assigned
-                "score": add.get("certainty") or add.get("distance") or 0.0,
-                "meta": { "file": o.get("file"), "caption": o.get("caption"), "species": o.get("species") }
+                "id": str(obj.uuid),
+                "score": obj.metadata.certainty if obj.metadata.certainty else (1 - obj.metadata.distance) if obj.metadata.distance else 0.0,
+                "meta": { 
+                    "file": obj.properties.get("file"), 
+                    "caption": obj.properties.get("caption"), 
+                    "species": obj.properties.get("species") 
+                }
             })
         # store previous_search_vector in redis for session
         redis_set_json(r, f"{req.session_id}:previous_search_vector", qv.tolist())
@@ -148,6 +188,7 @@ class FeedbackRequest(BaseModel):
     alpha: float = 0.4
     gamma: float = 0.5
     top_k: int = 20
+    model_key: Optional[str] = "clip-base"
 
 class FeedbackResponse(BaseModel):
     results: list
@@ -159,11 +200,16 @@ async def search_by_image(
     session_id: str = Form(...), 
     file: UploadFile = File(...), 
     top_k: int = Form(20),
-    user_id: str = Form("anonymous")
+    user_id: str = Form("anonymous"),
+    model_key: str = Form("clip-base")
 ):
     """Search by uploading an image"""
     if client is None:
         raise HTTPException(status_code=500, detail="Weaviate client not configured")
+    
+    # Get model-specific encoder and collection
+    model_encoder = get_encoder_for_model(model_key)
+    collection_name = get_collection_name(model_key)
     
     try:
         # Read and process uploaded image
@@ -171,25 +217,28 @@ async def search_by_image(
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
         
         # Encode image to vector
-        qv = encoder.encode_images([image])[0]
+        qv = model_encoder.encode_images([image])[0]
         qv = l2norm_np(qv)
         
         # Search in Weaviate
-        res = (
-            client.query.get(CLASS_NAME, ["file","caption","species"])
-            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
-            .with_near_vector({"vector": qv.tolist()})
-            .with_limit(top_k)
-            .do()
+        import weaviate.classes as wvc
+        collection = client.collections.get(collection_name)
+        response = collection.query.near_vector(
+            near_vector=qv.tolist(),
+            limit=top_k,
+            return_metadata=wvc.query.MetadataQuery(certainty=True, distance=True)
         )
-        objs = res.get("data", {}).get("Get", {}).get(CLASS_NAME, [])
+        
         results = []
-        for o in objs:
-            add = o.get("_additional", {})
+        for obj in response.objects:
             results.append({
-                "id": add.get("id"),
-                "score": add.get("certainty") or add.get("distance") or 0.0,
-                "meta": { "file": o.get("file"), "caption": o.get("caption"), "species": o.get("species") }
+                "id": str(obj.uuid),
+                "score": obj.metadata.certainty if obj.metadata.certainty else (1 - obj.metadata.distance) if obj.metadata.distance else 0.0,
+                "meta": { 
+                    "file": obj.properties.get("file"), 
+                    "caption": obj.properties.get("caption"), 
+                    "species": obj.properties.get("species") 
+                }
             })
         
         # Store vector for feedback
@@ -215,8 +264,12 @@ def feedback(req: FeedbackRequest):
     if client is None:
         raise HTTPException(status_code=500, detail="Weaviate client not configured")
 
+    # Get model-specific encoder and collection
+    model_encoder = get_encoder_for_model(req.model_key)
+    collection_name = get_collection_name(req.model_key)
+
     # Log request for debugging
-    logger.info(f"Feedback request - session: {req.session_id}, liked: {len(req.liked_image_ids)}, disliked: {len(req.disliked_image_ids)}, text: {bool(req.feedback_text and req.feedback_text.strip())}")
+    logger.info(f"Feedback request - session: {req.session_id}, model: {req.model_key}, liked: {len(req.liked_image_ids)}, disliked: {len(req.disliked_image_ids)}, text: {bool(req.feedback_text and req.feedback_text.strip())}")
 
     # Validate at least some feedback
     has_text_feedback = req.feedback_text and req.feedback_text.strip()
@@ -232,20 +285,20 @@ def feedback(req: FeedbackRequest):
     # encode text feedback
     v_text = None
     if has_text_feedback:
-        v_text = encoder.encode_text([req.feedback_text])[0]
+        v_text = model_encoder.encode_text([req.feedback_text])[0]
 
     # fetch liked image vectors from Weaviate by uuid
     v_like = None
     if req.liked_image_ids:
         vecs = []
+        collection = client.collections.get(collection_name)
         for uid in req.liked_image_ids:
             if not uid:  # Skip empty/None IDs
                 continue
             try:
-                obj = client.data_object.get_by_id(uid, with_vector=True)
-                if obj and "vector" in obj:
-                    vec = obj["vector"]
-                    vecs.append(np.array(vec, dtype=np.float32))
+                obj = collection.query.fetch_object_by_id(uid, include_vector=True)
+                if obj and obj.vector:
+                    vecs.append(np.array(obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector, dtype=np.float32))
             except Exception as e:
                 logger.warning("Failed to fetch liked object %s: %s", uid, e)
         if vecs:
@@ -255,14 +308,14 @@ def feedback(req: FeedbackRequest):
     v_dislike = None
     if req.disliked_image_ids:
         vecs = []
+        collection = client.collections.get(collection_name)
         for uid in req.disliked_image_ids:
             if not uid:  # Skip empty/None IDs
                 continue
             try:
-                obj = client.data_object.get_by_id(uid, with_vector=True)
-                if obj and "vector" in obj:
-                    vec = obj["vector"]
-                    vecs.append(np.array(vec, dtype=np.float32))
+                obj = collection.query.fetch_object_by_id(uid, include_vector=True)
+                if obj and obj.vector:
+                    vecs.append(np.array(obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector, dtype=np.float32))
             except Exception as e:
                 logger.warning("Failed to fetch disliked object %s: %s", uid, e)
         if vecs:
@@ -299,21 +352,24 @@ def feedback(req: FeedbackRequest):
 
     # search again in Weaviate
     try:
-        res = (
-            client.query.get(CLASS_NAME, ["file","caption","species"])
-            .with_additional(["id", "certainty", "distance"])  # Explicitly request id
-            .with_near_vector({"vector": v_new.tolist()})
-            .with_limit(req.top_k)
-            .do()
+        import weaviate.classes as wvc
+        collection = client.collections.get(collection_name)
+        response = collection.query.near_vector(
+            near_vector=v_new.tolist(),
+            limit=req.top_k,
+            return_metadata=wvc.query.MetadataQuery(certainty=True, distance=True)
         )
-        objs = res.get("data", {}).get("Get", {}).get(CLASS_NAME, [])
+        
         results = []
-        for o in objs:
-            add = o.get("_additional", {})
+        for obj in response.objects:
             results.append({
-                "id": add.get("id"),
-                "score": add.get("certainty") or add.get("distance") or 0.0,
-                "meta": { "file": o.get("file"), "caption": o.get("caption"), "species": o.get("species")}
+                "id": str(obj.uuid),
+                "score": obj.metadata.certainty if obj.metadata.certainty else (1 - obj.metadata.distance) if obj.metadata.distance else 0.0,
+                "meta": { 
+                    "file": obj.properties.get("file"), 
+                    "caption": obj.properties.get("caption"), 
+                    "species": obj.properties.get("species")
+                }
             })
         return FeedbackResponse(results=results, refined_vector=v_new.tolist(), turn_feedback_vector=v_turn.tolist())
     except Exception as e:
@@ -330,21 +386,54 @@ def health_check():
         "encoder": encoder is not None
     }
 
+@app.get("/models")
+def get_available_models():
+    """Get list of available models"""
+    models = []
+    for key, info in settings.AVAILABLE_MODELS.items():
+        models.append({
+            "key": key,
+            "name": info["name"],
+            "description": info["description"],
+            "model_id": info["model_id"],
+            "collection": info["collection"]
+        })
+    return {"models": models, "default": "clip-base"}
+
 @app.get("/stats")
 def get_stats():
-    """Get database statistics"""
+    """Get database statistics for all models"""
     if client is None:
         raise HTTPException(status_code=500, detail="Weaviate not configured")
-    try:
-        result = client.query.aggregate(CLASS_NAME).with_meta_count().do()
-        count = result.get("data", {}).get("Aggregate", {}).get(CLASS_NAME, [{}])[0].get("meta", {}).get("count", 0)
-        return {
-            "total_images": count,
-            "collection": CLASS_NAME
-        }
-    except Exception as e:
-        logger.exception("Stats error: %s", e)
-        return {"total_images": 0, "error": str(e)}
+    
+    stats = {}
+    total = 0
+    
+    # Get stats for each model's collection
+    for model_key, model_info in settings.AVAILABLE_MODELS.items():
+        collection_name = model_info["collection"]
+        try:
+            collection = client.collections.get(collection_name)
+            response = collection.aggregate.over_all(total_count=True)
+            count = response.total_count
+            stats[model_key] = {
+                "collection": collection_name,
+                "count": count,
+                "model_name": model_info["name"]
+            }
+            total += count
+        except Exception as e:
+            logger.warning(f"Stats error for {model_key}: %s", e)
+            stats[model_key] = {
+                "collection": collection_name,
+                "count": 0,
+                "error": str(e)
+            }
+    
+    return {
+        "total_images": total,
+        "models": stats
+    }
 
 def save_search_history(session_id: str, user_id: str, query_text: str, query_type: str, num_results: int, top_result_id: str):
     """Save search history to Redis"""

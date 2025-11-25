@@ -1,101 +1,337 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <title>Animal Image Retrieval</title>
-  <link rel="stylesheet" href="styles_improved.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Retrieval System</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-  <header>
-    <div class="header-content">
-      <h1>🐾 Animal Image Retrieval</h1>
-      <p class="subtitle">Intelligent search with visual feedback</p>
-    </div>
-  </header>
-
-  <!-- Stats Bar -->
-  <div id="statsBar" class="stats-bar">
-    <span></span>
-    <div style="display: flex; gap: 10px;">
-      <a href="advanced_search.html" class="analytics-link">🔍 Advanced Search</a>
-      <a href="analytics.html" class="analytics-link">📊 Analytics</a>
-    </div>
-  </div>
-
-  <div class="search-container">
-    <div class="search-tabs">
-      <button class="tab-btn active" onclick="switchTab('text')">🔤 Text Search</button>
-      <button class="tab-btn" onclick="switchTab('image')">📸 Image Search</button>
-    </div>
-
-    <div id="textSearch" class="search-panel active">
-      <input id="queryInput" type="text" placeholder="Type your query (e.g., black cat sleeping)" />
-      <button id="searchBtn" class="btn-primary">🔍 Search</button>
-      <label style="margin-left: 15px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
-        <input type="checkbox" id="autoFilterSpecies" checked style="cursor: pointer;">
-        <span style="color: #666; font-size: 0.9rem;">Auto-filter by species (cat, dog, etc.)</span>
-      </label>
-    </div>
-
-    <div id="imageSearch" class="search-panel">
-      <input id="imageUpload" type="file" accept="image/*" style="display:none" />
-      <button onclick="document.getElementById('imageUpload').click()" class="btn-primary">
-        📤 Upload Image
-      </button>
-      <span id="fileName" class="file-name"></span>
-      <button id="searchByImageBtn" class="btn-secondary" style="display:none">🔍 Search Similar</button>
-    </div>
-  </div>
-
-  <div id="loading" class="loading" style="display:none">
-    <div class="spinner"></div>
-    <p>Searching...</p>
-  </div>
-
-  <div id="resultsInfo" class="results-info"></div>
-  <div id="results" class="results-grid"></div>
-
-  <div class="feedback-container">
-    <div>
-      <h3>💡 Refine Your Search</h3>
-      <p class="hint">
-        <strong>How it works:</strong><br>
-        👍 Mark images as <strong>Relevant</strong> (want more like this)<br>
-        👎 Mark images as <strong>Not Relevant</strong> (want less like this)<br>
-        ✨ Click <strong>Refine</strong> button below to improve results
-      </p>
-      <div id="feedbackStats" class="feedback-stats"></div>
-      
-      <!-- Visual refine button -->
-      <button id="visualRefineBtn" class="btn-refine">
-        ✨ Refine Search
-      </button>
-      
-      <!-- Optional text feedback (collapsible) -->
-      <details class="text-feedback-details">
-        <summary class="text-feedback-toggle">
-          📝 Add text description (optional)
-        </summary>
-        <div class="text-feedback-content">
-          <textarea id="feedbackText" 
-                    placeholder="e.g., 'fluffy white cat in snow' or 'Nike running shoes red color'&#10;&#10;💡 Tip: Text is especially useful when searching by image to add context!"></textarea>
-          <button id="manualRefineBtn" class="btn-refine-manual">
-            ✨ Refine with Text
-          </button>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <i class="fas fa-images"></i>
+                <span>Image Retrieval</span>
+            </div>
+            <nav class="nav-links">
+                <a href="#" class="nav-link active" data-tab="search">
+                    <i class="fas fa-search"></i>
+                    <span>Tìm kiếm</span>
+                </a>
+                <a href="#" class="nav-link" data-tab="history">
+                    <i class="fas fa-history"></i>
+                    <span>Lịch sử</span>
+                </a>
+                <a href="#" class="nav-link" data-tab="analytics">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Thống kê</span>
+                </a>
+            </nav>
+            <div class="header-actions">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Đang kết nối...</span>
+                </div>
+            </div>
         </div>
-      </details>
-    </div>
-  </div>
+    </header>
 
-  <!-- Search History -->
-  <div class="history-container">
-    <div>
-      <h3>📜 Recent Searches</h3>
-      <button id="toggleHistory" class="btn-secondary" onclick="toggleHistory()">Show History</button>
-      <div id="historyList" class="history-list" style="display:none"></div>
-    </div>
-  </div>
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Search Tab -->
+        <section id="searchTab" class="tab-content active">
+            <!-- Search Section -->
+            <div class="search-section">
+                <div class="search-container">
+                    <h1 class="search-title">Tìm kiếm hình ảnh thông minh</h1>
+                    <p class="search-subtitle">Sử dụng AI để tìm kiếm hình ảnh bằng văn bản hoặc hình ảnh mẫu</p>
+                    
+                    <!-- Model Selection -->
+                    <div class="model-selector">
+                        <label class="model-label">
+                            <i class="fas fa-brain"></i>
+                            Chọn Model AI:
+                        </label>
+                        <div class="model-options" id="modelOptions">
+                            <!-- Models will be loaded dynamically -->
+                        </div>
+                    </div>
 
-  <script src="script.js"></script>
+                    <!-- Search Type Toggle -->
+                    <div class="search-type-toggle">
+                        <button class="toggle-btn active" data-type="text">
+                            <i class="fas fa-keyboard"></i>
+                            Tìm bằng văn bản
+                        </button>
+                        <button class="toggle-btn" data-type="image">
+                            <i class="fas fa-image"></i>
+                            Tìm bằng hình ảnh
+                        </button>
+                    </div>
+
+                    <!-- Text Search Form -->
+                    <form id="textSearchForm" class="search-form">
+                        <div class="search-input-wrapper">
+                            <i class="fas fa-search search-icon"></i>
+                            <input 
+                                type="text" 
+                                id="searchQuery" 
+                                class="search-input" 
+                                placeholder="Mô tả hình ảnh bạn muốn tìm... (VD: mèo đang ngủ, chó chạy trên bãi biển)"
+                                autocomplete="off"
+                            >
+                            <button type="submit" class="search-btn">
+                                <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                        <div class="search-suggestions">
+                            <span class="suggestion-label">Gợi ý:</span>
+                            <button type="button" class="suggestion-chip" data-query="cute cat">🐱 Mèo dễ thương</button>
+                            <button type="button" class="suggestion-chip" data-query="dog running">🐕 Chó chạy</button>
+                            <button type="button" class="suggestion-chip" data-query="butterfly on flower">🦋 Bướm trên hoa</button>
+                            <button type="button" class="suggestion-chip" data-query="elephant in nature">🐘 Voi trong tự nhiên</button>
+                        </div>
+                    </form>
+
+                    <!-- Image Search Form -->
+                    <form id="imageSearchForm" class="search-form hidden">
+                        <div class="image-upload-zone" id="imageUploadZone">
+                            <input type="file" id="imageInput" accept="image/*" class="file-input">
+                            <div class="upload-content">
+                                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                                <p class="upload-text">Kéo thả hình ảnh vào đây</p>
+                                <p class="upload-subtext">hoặc click để chọn file</p>
+                            </div>
+                            <div class="image-preview hidden" id="imagePreview">
+                                <img id="previewImg" src="" alt="Preview">
+                                <button type="button" class="remove-image-btn" id="removeImageBtn">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" class="search-btn-full" id="imageSearchBtn" disabled>
+                            <i class="fas fa-search"></i>
+                            Tìm kiếm hình ảnh tương tự
+                        </button>
+                    </form>
+
+                    <!-- Advanced Options -->
+                    <div class="advanced-options">
+                        <button type="button" class="advanced-toggle" id="advancedToggle">
+                            <i class="fas fa-sliders-h"></i>
+                            Tùy chọn nâng cao
+                            <i class="fas fa-chevron-down toggle-arrow"></i>
+                        </button>
+                        <div class="advanced-panel hidden" id="advancedPanel">
+                            <div class="option-group">
+                                <label>Số kết quả hiển thị</label>
+                                <input type="range" id="topKSlider" min="5" max="50" value="20" class="slider">
+                                <span id="topKValue">20</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section hidden" id="resultsSection">
+                <div class="results-header">
+                    <h2 class="results-title">
+                        <i class="fas fa-images"></i>
+                        Kết quả tìm kiếm
+                        <span class="results-count" id="resultsCount">(0)</span>
+                    </h2>
+                    <div class="results-actions">
+                        <button class="action-btn" id="clearFeedbackBtn" title="Xóa phản hồi">
+                            <i class="fas fa-eraser"></i>
+                            Xóa chọn
+                        </button>
+                        <button class="action-btn primary" id="submitFeedbackBtn" disabled title="Gửi phản hồi để tinh chỉnh kết quả">
+                            <i class="fas fa-magic"></i>
+                            Tinh chỉnh kết quả
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Feedback Panel -->
+                <div class="feedback-panel" id="feedbackPanel">
+                    <div class="feedback-info">
+                        <div class="feedback-stat liked">
+                            <i class="fas fa-heart"></i>
+                            <span id="likedCount">0</span> ảnh thích
+                        </div>
+                        <div class="feedback-stat disliked">
+                            <i class="fas fa-heart-broken"></i>
+                            <span id="dislikedCount">0</span> ảnh không thích
+                        </div>
+                    </div>
+                    <div class="feedback-text-input">
+                        <input 
+                            type="text" 
+                            id="feedbackText" 
+                            placeholder="Thêm mô tả để tinh chỉnh (VD: tôi muốn thấy nhiều mèo trắng hơn)"
+                            class="feedback-input"
+                        >
+                    </div>
+                </div>
+
+                <!-- Results Grid -->
+                <div class="results-grid" id="resultsGrid">
+                    <!-- Results will be loaded dynamically -->
+                </div>
+
+                <!-- Loading State -->
+                <div class="loading-state hidden" id="loadingState">
+                    <div class="loader"></div>
+                    <p>Đang tìm kiếm...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div class="empty-state hidden" id="emptyState">
+                    <i class="fas fa-search"></i>
+                    <h3>Không tìm thấy kết quả</h3>
+                    <p>Thử tìm kiếm với từ khóa khác</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- History Tab -->
+        <section id="historyTab" class="tab-content">
+            <div class="history-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-history"></i> Lịch sử tìm kiếm</h2>
+                    <button class="action-btn" id="refreshHistoryBtn">
+                        <i class="fas fa-sync-alt"></i>
+                        Làm mới
+                    </button>
+                </div>
+                <div class="history-list" id="historyList">
+                    <!-- History items will be loaded dynamically -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Analytics Tab -->
+        <section id="analyticsTab" class="tab-content">
+            <div class="analytics-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-chart-bar"></i> Thống kê hệ thống</h2>
+                    <button class="action-btn" id="refreshAnalyticsBtn">
+                        <i class="fas fa-sync-alt"></i>
+                        Làm mới
+                    </button>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="stats-grid" id="statsGrid">
+                    <div class="stat-card">
+                        <div class="stat-icon blue">
+                            <i class="fas fa-images"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalImages">0</span>
+                            <span class="stat-label">Tổng số ảnh</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green">
+                            <i class="fas fa-search"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalSearches">0</span>
+                            <span class="stat-label">Lượt tìm kiếm</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon purple">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalUsers">0</span>
+                            <span class="stat-label">Người dùng</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon orange">
+                            <i class="fas fa-brain"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="totalModels">0</span>
+                            <span class="stat-label">Model AI</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Model Stats -->
+                <div class="analytics-card">
+                    <h3><i class="fas fa-database"></i> Thống kê theo Model</h3>
+                    <div class="model-stats" id="modelStats">
+                        <!-- Model stats will be loaded dynamically -->
+                    </div>
+                </div>
+
+                <!-- Search Types Chart -->
+                <div class="analytics-row">
+                    <div class="analytics-card">
+                        <h3><i class="fas fa-chart-pie"></i> Loại tìm kiếm</h3>
+                        <div class="chart-container">
+                            <div class="donut-chart" id="searchTypesChart">
+                                <div class="donut-segment text-segment"></div>
+                                <div class="donut-hole">
+                                    <span id="textSearchPercent">0%</span>
+                                    <small>Văn bản</small>
+                                </div>
+                            </div>
+                            <div class="chart-legend">
+                                <div class="legend-item">
+                                    <span class="legend-color text"></span>
+                                    <span>Tìm bằng văn bản: <strong id="textSearchCount">0</strong></span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-color image"></span>
+                                    <span>Tìm bằng hình ảnh: <strong id="imageSearchCount">0</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="analytics-card">
+                        <h3><i class="fas fa-fire"></i> Từ khóa phổ biến</h3>
+                        <div class="top-queries" id="topQueries">
+                            <!-- Top queries will be loaded dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Image Modal -->
+    <div class="modal hidden" id="imageModal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <button class="modal-close" id="modalClose">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="modal-image-container">
+                <img id="modalImage" src="" alt="Full size image">
+            </div>
+            <div class="modal-info">
+                <p class="modal-caption" id="modalCaption"></p>
+                <div class="modal-meta">
+                    <span class="modal-score"><i class="fas fa-star"></i> Score: <span id="modalScore"></span></span>
+                    <span class="modal-species"><i class="fas fa-paw"></i> <span id="modalSpecies"></span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="app.js"></script>
 </body>
 </html>

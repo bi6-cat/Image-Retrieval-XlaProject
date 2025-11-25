@@ -8,6 +8,7 @@ Pillow
 tqdm
 redis
 faiss-gpu-cu12
+faiss-cpu
 python-dotenv
 pydantic
 jinja2

@@ -7,8 +7,8 @@ import torch
 import json
 
 class FeatureExtractor:
-    def __init__(self):
-        self.encoder = Encoder()
+    def __init__(self, model_name=None):
+        self.encoder = Encoder(model_name=model_name)
         # load VQA model (BLIP base for VQA tasks)
         try:
             self.vqa_processor = BlipProcessor.from_pretrained("Salesforce/blip-vqa-base")
