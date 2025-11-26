@@ -288,6 +288,7 @@ def feedback(req: FeedbackRequest):
 
     # fetch liked image vectors from Weaviate by uuid
     v_like = None
+    liked_species = set()  # Track species of liked images
     if req.liked_image_ids:
         vecs = []
         collection = client.collections.get(collection_name)
@@ -298,6 +299,9 @@ def feedback(req: FeedbackRequest):
                 obj = collection.query.fetch_object_by_id(uid, include_vector=True)
                 if obj and obj.vector:
                     vecs.append(np.array(obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector, dtype=np.float32))
+                    # Track species of liked images
+                    if obj.properties.get("species"):
+                        liked_species.add(obj.properties.get("species"))
             except Exception as e:
                 logger.warning("Failed to fetch liked object %s: %s", uid, e)
         if vecs:
@@ -305,6 +309,7 @@ def feedback(req: FeedbackRequest):
 
     # fetch disliked image vectors from Weaviate by uuid
     v_dislike = None
+    disliked_species = set()  # Track species of disliked images
     if req.disliked_image_ids:
         vecs = []
         collection = client.collections.get(collection_name)
@@ -315,10 +320,15 @@ def feedback(req: FeedbackRequest):
                 obj = collection.query.fetch_object_by_id(uid, include_vector=True)
                 if obj and obj.vector:
                     vecs.append(np.array(obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector, dtype=np.float32))
+                    # Track species of disliked images
+                    if obj.properties.get("species"):
+                        disliked_species.add(obj.properties.get("species"))
             except Exception as e:
                 logger.warning("Failed to fetch disliked object %s: %s", uid, e)
         if vecs:
             v_dislike = np.mean(np.stack(vecs, axis=0), axis=0)
+    
+    logger.info(f"Liked species: {liked_species}, Disliked species: {disliked_species}")
 
     # fuse with Rocchio algorithm: Q_new = Q_old + α*relevant - β*non_relevant
     v_turn = None
@@ -335,11 +345,14 @@ def feedback(req: FeedbackRequest):
     else:
         v_new = prev_v
     
-    # Apply negative feedback (move away from disliked images)
+    # NOTE: For negative feedback, we DON'T modify the vector anymore
+    # Instead, we use filtering:
+    # 1. Keep same species as liked images (filter in Weaviate query)
+    # 2. Exclude disliked images from results (post-filter)
+    # This approach works better because CLIP embeddings don't cleanly separate
+    # "species" from "secondary attributes" (color, pose, etc.)
     if v_dislike is not None:
-        # Subtract disliked vector with smaller weight (gamma)
-        v_new = l2norm_np(v_new - req.gamma * v_dislike)
-        logger.info("Applied negative feedback with %d disliked images", len(req.disliked_image_ids))
+        logger.info("Negative feedback: will exclude %d disliked images from results (keeping species filter)", len(req.disliked_image_ids))
 
     # Ensure v_turn is set for response (even if None, set to v_new)
     if v_turn is None:
@@ -353,16 +366,43 @@ def feedback(req: FeedbackRequest):
     try:
         import weaviate.classes as wvc
         collection = client.collections.get(collection_name)
+        
+        # Build filter: prioritize liked species, exclude disliked images
+        search_filter = None
+        
+        # If we have liked species, filter to only show same species
+        if liked_species:
+            # Filter to only show images from liked species
+            species_filters = [
+                wvc.query.Filter.by_property("species").equal(sp) 
+                for sp in liked_species
+            ]
+            if len(species_filters) == 1:
+                search_filter = species_filters[0]
+            else:
+                search_filter = wvc.query.Filter.any_of(species_filters)
+            logger.info(f"Filtering results to species: {liked_species}")
+        
+        # Request more results to filter out disliked ones
+        fetch_limit = req.top_k + len(req.disliked_image_ids) * 2
+        
         response = collection.query.near_vector(
             near_vector=v_new.tolist(),
-            limit=req.top_k,
+            limit=fetch_limit,
+            filters=search_filter,
             return_metadata=wvc.query.MetadataQuery(certainty=True, distance=True)
         )
         
+        # Filter out disliked images from results
+        disliked_set = set(req.disliked_image_ids)
         results = []
         for obj in response.objects:
+            obj_id = str(obj.uuid)
+            # Skip disliked images
+            if obj_id in disliked_set:
+                continue
             results.append({
-                "id": str(obj.uuid),
+                "id": obj_id,
                 "score": obj.metadata.certainty if obj.metadata.certainty else (1 - obj.metadata.distance) if obj.metadata.distance else 0.0,
                 "meta": { 
                     "file": obj.properties.get("file"), 
@@ -370,6 +410,11 @@ def feedback(req: FeedbackRequest):
                     "species": obj.properties.get("species")
                 }
             })
+            # Stop when we have enough results
+            if len(results) >= req.top_k:
+                break
+                
+        logger.info(f"Returning {len(results)} results after filtering")
         return FeedbackResponse(results=results, refined_vector=v_new.tolist(), turn_feedback_vector=v_turn.tolist())
     except Exception as e:
         logger.exception("Weaviate rerank error: %s", e)
