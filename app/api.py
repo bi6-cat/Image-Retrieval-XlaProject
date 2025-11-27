@@ -185,7 +185,7 @@ class FeedbackRequest(BaseModel):
     w_text: float = 0.5
     w_like: float = 0.5
     alpha: float = 0.4
-    gamma: float = 0.5
+    gamma: float = 0.7  # Tăng gamma mặc định để giảm màu sắc mạnh hơn khi dislike
     top_k: int = 20
     model_key: Optional[str] = "clip-base-p32"
 
@@ -345,14 +345,33 @@ def feedback(req: FeedbackRequest):
     else:
         v_new = prev_v
     
-    # NOTE: For negative feedback, we DON'T modify the vector anymore
-    # Instead, we use filtering:
-    # 1. Keep same species as liked images (filter in Weaviate query)
-    # 2. Exclude disliked images from results (post-filter)
-    # This approach works better because CLIP embeddings don't cleanly separate
-    # "species" from "secondary attributes" (color, pose, etc.)
-    if v_dislike is not None:
-        logger.info("Negative feedback: will exclude %d disliked images from results (keeping species filter)", len(req.disliked_image_ids))
+    # Negative feedback: Giảm trọng số các thuộc tính phụ (màu sắc, pose) 
+    # trong khi giữ nguyên species bằng cách:
+    # 1. Tính vector "secondary attributes" = v_dislike - v_species_centroid
+    # 2. Trừ secondary attributes ra khỏi query vector với gamma weight
+    if v_dislike is not None and liked_species:
+        logger.info("Applying negative feedback: reducing secondary attributes (color, pose) while keeping species")
+        
+        # Lấy centroid của species từ liked images để giữ nguyên đặc trưng loài
+        # v_like đã là centroid của liked images (cùng species)
+        if v_like is not None:
+            # secondary_attrs = những gì disliked có mà liked không có
+            # (màu sắc khác, pose khác, background khác...)
+            secondary_attrs = v_dislike - v_like
+            secondary_attrs = l2norm_np(secondary_attrs)
+            
+            # Giảm secondary attributes với gamma weight (mặc định 0.5)
+            # gamma càng cao = giảm màu sắc/attributes phụ càng nhiều
+            v_new = l2norm_np(v_new - req.gamma * secondary_attrs)
+            logger.info(f"Reduced secondary attributes with gamma={req.gamma}")
+        else:
+            # Nếu không có liked, chỉ giảm nhẹ v_dislike
+            v_new = l2norm_np(v_new - 0.3 * req.gamma * v_dislike)
+            logger.info("Applied mild negative feedback without species anchor")
+    elif v_dislike is not None:
+        # Không có liked species để anchor, giảm nhẹ disliked features
+        v_new = l2norm_np(v_new - 0.2 * req.gamma * v_dislike)
+        logger.info("Applied mild negative feedback (no species filter)")
 
     # Ensure v_turn is set for response (even if None, set to v_new)
     if v_turn is None:
@@ -552,6 +571,55 @@ def get_analytics():
         logger.exception("Analytics error: %s", e)
         return {"error": str(e)}
 
+# Cache for species text embeddings (for auto-classification)
+species_embeddings_cache = {}
+
+# List of known species in the dataset
+KNOWN_SPECIES = [
+    "alpaca", "bat", "bird", "brown_bear", "buffalo", "butterfly", "camel", 
+    "cat", "chicken", "dog", "dolphin", "elephant", "fox", "horse", 
+    "kangaroo", "koala", "polar_bear", "red_panda", "seal", "sheep", 
+    "snow_leopard", "walrus", "wombat", "zebra"
+]
+
+def get_species_embeddings(model_encoder):
+    """Get or compute text embeddings for all known species"""
+    global species_embeddings_cache
+    
+    model_name = str(model_encoder.model_name) if hasattr(model_encoder, 'model_name') else "default"
+    
+    if model_name not in species_embeddings_cache:
+        logger.info(f"Computing species embeddings for {model_name}...")
+        # Create descriptive prompts for better CLIP matching
+        species_texts = [f"a photo of a {sp.replace('_', ' ')}" for sp in KNOWN_SPECIES]
+        embeddings = model_encoder.encode_text(species_texts)
+        # Normalize embeddings
+        embeddings = np.array([l2norm_np(e) for e in embeddings])
+        species_embeddings_cache[model_name] = embeddings
+        logger.info(f"✓ Cached {len(KNOWN_SPECIES)} species embeddings")
+    
+    return species_embeddings_cache[model_name]
+
+def auto_classify_image(image_vector, model_encoder):
+    """Auto-classify image by comparing with species embeddings"""
+    species_embeddings = get_species_embeddings(model_encoder)
+    
+    # Compute cosine similarity (vectors are already normalized)
+    similarities = np.dot(species_embeddings, image_vector)
+    
+    # Get top match
+    best_idx = np.argmax(similarities)
+    best_score = similarities[best_idx]
+    best_species = KNOWN_SPECIES[best_idx]
+    
+    # Get top 3 for logging
+    top_indices = np.argsort(similarities)[-3:][::-1]
+    top_matches = [(KNOWN_SPECIES[i], float(similarities[i])) for i in top_indices]
+    
+    logger.info(f"Auto-classification: {best_species} (score: {best_score:.3f}), top 3: {top_matches}")
+    
+    return best_species, float(best_score), top_matches
+
 @app.post("/upload-image")
 async def upload_image_to_db(
     file: UploadFile = File(...),
@@ -579,18 +647,9 @@ async def upload_image_to_db(
         file_ext = os.path.splitext(file.filename)[1] or '.jpg'
         unique_filename = f"user_upload_{timestamp}_{uuid.uuid4().hex[:8]}{file_ext}"
         
-        # Determine species from caption or default
-        if not species:
-            species = "uploaded"  # default category
-        
-        # Save image to data directory
-        upload_dir = f"data/full/{species}"
-        os.makedirs(upload_dir, exist_ok=True)
-        image_path = os.path.join(upload_dir, unique_filename)
-        image.save(image_path)
-        save_time = time.time() - start_time - read_time
-        
-        relative_path = f"full/{species}/{unique_filename}"
+        # We'll determine storage folder after encoding (for auto-classification)
+        # For now, just note the provided species
+        provided_species = species
         
         # Index to clip-base-p32 only
         import weaviate.classes as wvc
@@ -607,13 +666,45 @@ async def upload_image_to_db(
         vector = l2norm_np(vector)
         encode_time = time.time() - encode_start
         
+        # Auto-classify if species not provided
+        auto_classified = False
+        classification_score = 0.0
+        top_matches = []
+        
+        if not species:
+            detected_species, classification_score, top_matches = auto_classify_image(vector, model_encoder)
+            species = detected_species
+            auto_classified = True
+            logger.info(f"Auto-detected species: {species} (confidence: {classification_score:.3f})")
+        
+        # Determine storage folder with detected/provided species
+        storage_folder = species if species else "uploaded"
+        
+        # Save file to the correct species folder
+        upload_dir = f"data/full/{storage_folder}"
+        os.makedirs(upload_dir, exist_ok=True)
+        image_path = os.path.join(upload_dir, unique_filename)
+        image.save(image_path)
+        save_time = time.time() - start_time - read_time - encode_time
+        
+        relative_path = f"full/{storage_folder}/{unique_filename}"
+        
+        # Generate caption if not provided
+        if not caption:
+            caption = f"A photo of a {species.replace('_', ' ')}"
+        
         # Prepare object
         obj_data = {
             "properties": {
                 "file": relative_path,
-                "caption": caption or f"User uploaded image",
+                "caption": caption,
                 "species": species,
-                "extra": json.dumps({"uploaded_by": user_id, "uploaded_at": timestamp}),
+                "extra": json.dumps({
+                    "uploaded_by": user_id, 
+                    "uploaded_at": timestamp,
+                    "auto_classified": auto_classified,
+                    "classification_score": classification_score
+                }),
                 "model_key": model_key
             },
             "vector": vector.tolist()
@@ -632,13 +723,15 @@ async def upload_image_to_db(
         
         logger.info(f"Upload completed in {total_time:.2f}s - Read: {read_time:.2f}s, Save: {save_time:.2f}s, Encode: {encode_time:.2f}s, DB: {db_time:.2f}s")
         
-        return {
+        response_data = {
             "success": True,
             "message": "Image uploaded and indexed successfully",
             "image_path": relative_path,
             "collection": collection_name,
             "uuid": str(uuid_result),
             "species": species,
+            "caption": caption,
+            "auto_classified": auto_classified,
             "processing_time": {
                 "total": round(total_time, 2),
                 "read_image": round(read_time, 2),
@@ -647,6 +740,16 @@ async def upload_image_to_db(
                 "database_insert": round(db_time, 2)
             }
         }
+        
+        # Add classification details if auto-classified
+        if auto_classified:
+            response_data["classification"] = {
+                "detected_species": species,
+                "confidence": round(classification_score, 3),
+                "top_matches": [{"species": sp, "score": round(sc, 3)} for sp, sc in top_matches]
+            }
+        
+        return response_data
         
     except Exception as e:
         logger.exception("Upload error: %s", e)
